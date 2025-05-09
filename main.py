@@ -37,7 +37,7 @@ def format_date(ms_timestamp: str) -> str:
     except Exception:
         return "неизвестна"
 
-@app.post("/apple-webhook")
+@app.post("/apple_webhook")
 async def apple_webhook(request: Request):
     payload = await request.json()
 
