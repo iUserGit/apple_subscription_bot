@@ -11,7 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 # Создаем экземпляр бота Telegram
 bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
-@app.route('/apple-webhook', methods=['POST'])
+@app.route('/apple_webhook', methods=['POST'])
 def apple_webhook():
     data = request.get_json()  # Получаем данные из POST-запроса
 
