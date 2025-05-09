@@ -4,3 +4,5 @@ python-telegram-bot
 uvicorn
 quart
 PyJWT
+quart
+
