@@ -68,6 +68,11 @@ async def apple_webhook(request: Request):
         header_segment = signed_payload.split(".")[0]
         header_bytes = base64url_decode(header_segment.encode() + b'=' * (-len(header_segment) % 4))
         header = json.loads(header_bytes)
+        
+        # Убедимся, что в заголовке есть поле 'kid'
+        if 'kid' not in header:
+            raise ValueError("В заголовке JWT отсутствует поле 'kid'")
+
         kid = header["kid"]
 
         # Получаем среду (Sandbox или Production) из payload без проверки подписи
