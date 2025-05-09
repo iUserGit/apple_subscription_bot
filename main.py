@@ -41,6 +41,9 @@ def format_date(ms_timestamp: str) -> str:
 async def apple_webhook(request: Request):
     payload = await request.json()
 
+    # Логирование всего тела запроса
+    print(f"Полученный запрос: {json.dumps(payload, indent=2)}")
+
     signed_payload = payload.get("signedPayload")
     if not signed_payload:
         await send_telegram_message("⚠️ Получен запрос без signedPayload")
@@ -48,6 +51,9 @@ async def apple_webhook(request: Request):
 
     try:
         decoded_payload = jwt.get_unverified_claims(signed_payload)
+
+        # Логирование декодированного payload
+        print(f"Decoded Payload: {json.dumps(decoded_payload, indent=2)}")
 
         notification_type = decoded_payload.get("notificationType", "UNKNOWN")
         subtype = decoded_payload.get("subtype", "NONE")
@@ -58,6 +64,9 @@ async def apple_webhook(request: Request):
         bundle_version = data.get("bundleVersion", "N/A")
         purchase_date_raw = data.get("purchaseDate", None)
         purchase_date = format_date(purchase_date_raw) if purchase_date_raw else "не указана"
+
+        # Логирование извлеченных данных
+        print(f"Extracted data: productId={product_id}, bundleId={bundle_id}, bundleVersion={bundle_version}, purchaseDate={purchase_date}")
 
         readable_type = notification_map.get(notification_type, notification_type)
         readable_subtype = subtype_map.get(subtype, subtype)
