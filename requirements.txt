@@ -1,8 +1,4 @@
-Flask
-requests
-python-telegram-bot
+fastapi
 uvicorn
-quart
-PyJWT
-quart
-
+httpx
+python-jose
