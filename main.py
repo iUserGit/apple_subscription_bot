@@ -5,11 +5,11 @@ import hashlib
 import hmac
 import telegram
 import asyncio
-from flask import Flask, request, jsonify
+from quart import Quart, request, jsonify
 import jwt
 from jwt.exceptions import InvalidTokenError
 
-app = Flask(__name__)
+app = Quart(__name__)
 
 # Получаем ключи из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -41,7 +41,7 @@ def verify_apple_signature(payload, signature):
 
 @app.route('/apple_webhook', methods=['POST'])
 async def apple_webhook():
-    data = request.get_json()  # Получаем данные из POST-запроса
+    data = await request.get_json()  # Получаем данные из POST-запроса асинхронно
 
     # Логируем полученные данные
     app.logger.info(f"Received data: {data}")
@@ -85,4 +85,6 @@ async def apple_webhook():
     return jsonify({'status': 'success'}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    # Получаем порт из переменной окружения или по умолчанию 5000
+    port = int(os.getenv('PORT', 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)
