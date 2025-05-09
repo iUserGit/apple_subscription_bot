@@ -1,6 +1,6 @@
-from flask import Flask, request, jsonify
 import os
 import telegram
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
@@ -11,18 +11,18 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 # Создаем экземпляр бота Telegram
 bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
-# Обработчик для получения уведомлений от App Store
 @app.route('/apple-webhook', methods=['POST'])
 def apple_webhook():
     data = request.get_json()  # Получаем данные из POST-запроса
-    
+
+    # Логируем данные, чтобы увидеть, что приходит от Apple
+    app.logger.info(f"Received data: {data}")
+
     if not data:
+        app.logger.error('No data received!')
         return jsonify({'error': 'No data received'}), 400
 
-    # Обработать данные уведомления
-    # Это будет ваша логика для извлечения нужной информации
-    # Например, мы просто отправим их в Telegram
-
+    # Пример получения данных из payload (поменяйте на реальные поля из уведомлений)
     product = data.get('product_id', 'Неизвестный продукт')
     bundle_id = data.get('bundle_id', 'Неизвестный Bundle ID')
     version = data.get('version', 'Неизвестная версия')
@@ -36,9 +36,16 @@ def apple_webhook():
         f"🕒 Дата покупки: {purchase_date}"
     )
 
-    # Отправка сообщения в Telegram
-    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-    
+    # Логируем сообщение, которое отправляем в Telegram
+    app.logger.info(f"Sending message to Telegram: {message}")
+
+    try:
+        # Отправка сообщения в Telegram
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        app.logger.info('Message sent to Telegram successfully.')
+    except Exception as e:
+        app.logger.error(f"Failed to send message to Telegram: {e}")
+
     return jsonify({'status': 'success'}), 200
 
 if __name__ == '__main__':
