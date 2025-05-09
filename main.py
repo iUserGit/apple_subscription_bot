@@ -1,19 +1,41 @@
 import os
 import json
-import httpx
 from fastapi import FastAPI, Request
-from jose import jwt
-from jose.exceptions import JWTError
+import httpx
+from jose import jwt, jwk
+from jose.utils import base64url_decode
 from datetime import datetime, timezone
 
 app = FastAPI()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-APPLE_JWKS_URL = os.getenv("APPLE_JWKS_URL", "https://api.storekit.itunes.apple.com/in-app/v1/jwsPublicKeys")
 
-# === MAPS OMITTED HERE for brevity ===
-# notification_map and subtype_map оставим как у тебя
+notification_map = {
+    "DID_CHANGE_RENEWAL_PREF": "Пользователь изменил подписку",
+    "DID_RENEW": "Подписка успешно продлена",
+    "CANCEL": "Подписка отменена",
+    "INITIAL_BUY": "Первая покупка подписки",
+    "DID_FAIL_TO_RENEW": "Не удалось продлить подписку",
+    "DID_RECOVER": "Подписка восстановлена",
+    "DID_CHANGE_RENEWAL_STATUS": "Изменён статус автообновления",
+    "REFUND": "Произведён возврат",
+}
+
+subtype_map = {
+    "DOWNGRADE": "понизил уровень",
+    "UPGRADE": "повысил уровень",
+    "AUTO_RENEW_ENABLED": "включил автообновление",
+    "AUTO_RENEW_DISABLED": "отключил автообновление",
+    "VOLUNTARY": "отменил вручную",
+}
+
+APPLE_JWKS_URLS = {
+    "Sandbox": "https://api.storekit-sandbox.itunes.apple.com/in-app-purchase/v1/jwsPublicKeys",
+    "Production": "https://api.storekit.itunes.apple.com/in-app-purchase/v1/jwsPublicKeys"
+}
+
+jwks_cache = {}
 
 def format_date(ms_timestamp: str) -> str:
     try:
@@ -23,14 +45,13 @@ def format_date(ms_timestamp: str) -> str:
     except Exception:
         return "неизвестна"
 
-async def fetch_apple_public_key(kid: str, alg: str):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(APPLE_JWKS_URL)
-        keys = response.json().get("keys", [])
-        for key in keys:
-            if key["kid"] == kid and key["alg"] == alg:
-                return key
-    raise ValueError("Публичный ключ не найден для kid=" + kid)
+async def fetch_jwks(environment: str):
+    if environment not in jwks_cache:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(APPLE_JWKS_URLS[environment])
+            resp.raise_for_status()
+            jwks_cache[environment] = resp.json()
+    return jwks_cache[environment]
 
 @app.post("/apple-webhook")
 async def apple_webhook(request: Request):
@@ -43,28 +64,34 @@ async def apple_webhook(request: Request):
         return {"status": "ignored"}
 
     try:
-        # Получаем заголовки JWT
-        headers = jwt.get_unverified_header(signed_payload)
-        kid = headers["kid"]
-        alg = headers["alg"]
+        # Распаковка заголовка, чтобы извлечь 'kid'
+        header_segment = signed_payload.split(".")[0]
+        header_bytes = base64url_decode(header_segment.encode() + b'=' * (-len(header_segment) % 4))
+        header = json.loads(header_bytes)
+        kid = header["kid"]
 
-        # Получаем публичный ключ Apple по kid
-        public_key_jwk = await fetch_apple_public_key(kid, alg)
+        # Получаем среду (Sandbox или Production) из payload без проверки подписи
+        decoded_claims = jwt.get_unverified_claims(signed_payload)
+        environment = decoded_claims.get("environment", "Production")
 
-        # Декодируем JWT с проверкой подписи
-        decoded_payload = jwt.decode(
-            signed_payload,
-            key=public_key_jwk,
-            algorithms=[alg],
-            options={"verify_aud": False}  # Обычно аудитория не используется
-        )
+        jwks = await fetch_jwks(environment)
 
-        print(f"✅ Подпись подтверждена. Payload: {json.dumps(decoded_payload, indent=2)}")
+        key_data = next((key for key in jwks["keys"] if key["kid"] == kid), None)
+        if not key_data:
+            raise ValueError(f"Ключ с kid={kid} не найден в JWKS")
 
-        notification_type = decoded_payload.get("notificationType", "UNKNOWN")
-        subtype = decoded_payload.get("subtype", "NONE")
+        public_key = jwk.construct(key_data)
+        message, encoded_sig = signed_payload.rsplit('.', 1)
+        decoded_sig = base64url_decode(encoded_sig.encode())
 
-        data = decoded_payload.get("data", {})
+        if not public_key.verify(message.encode(), decoded_sig):
+            raise ValueError("Подпись JWT недействительна")
+
+        # Теперь можно использовать проверенный payload
+        data = decoded_claims.get("data", {})
+        notification_type = decoded_claims.get("notificationType", "UNKNOWN")
+        subtype = decoded_claims.get("subtype", "NONE")
+
         product_id = data.get("productId", "N/A")
         bundle_id = data.get("bundleId", "N/A")
         bundle_version = data.get("bundleVersion", "N/A")
@@ -85,8 +112,6 @@ async def apple_webhook(request: Request):
 
         await send_telegram_message(message)
 
-    except JWTError as e:
-        await send_telegram_message(f"❌ Ошибка валидации JWT: {str(e)}")
     except Exception as e:
         await send_telegram_message(f"❌ Ошибка при обработке payload: {str(e)}")
 

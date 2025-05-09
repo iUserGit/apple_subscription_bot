@@ -4,3 +4,4 @@ requests
 python-jose
 httpx
 cryptography
+python-jose[cryptography]
