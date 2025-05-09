@@ -1,28 +1,64 @@
 import os
+import json
+import base64
+import hashlib
+import hmac
 import telegram
+import asyncio
 from flask import Flask, request, jsonify
+import jwt
+from jwt.exceptions import InvalidTokenError
 
 app = Flask(__name__)
 
 # Получаем ключи из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+APPLE_SHARED_SECRET = os.getenv('APPLE_SHARED_SECRET')
 
 # Создаем экземпляр бота Telegram
 bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
+def verify_apple_signature(payload, signature):
+    """
+    Функция для верификации подписи данных, полученных от Apple.
+    """
+    try:
+        # Расшифровка подписи с использованием APPLE_SHARED_SECRET
+        decoded_signature = base64.b64decode(signature)
+        
+        # Хешируем полученные данные с использованием APPLE_SHARED_SECRET
+        expected_signature = hmac.new(APPLE_SHARED_SECRET.encode(), payload.encode(), hashlib.sha256).digest()
+        
+        # Сравниваем вычисленную подпись с полученной
+        if decoded_signature == expected_signature:
+            return True
+        else:
+            return False
+    except Exception as e:
+        app.logger.error(f"Ошибка при верификации подписи: {e}")
+        return False
+
 @app.route('/apple_webhook', methods=['POST'])
-def apple_webhook():
+async def apple_webhook():
     data = request.get_json()  # Получаем данные из POST-запроса
 
-    # Логируем данные, чтобы увидеть, что приходит от Apple
+    # Логируем полученные данные
     app.logger.info(f"Received data: {data}")
 
     if not data:
         app.logger.error('No data received!')
         return jsonify({'error': 'No data received'}), 400
 
-    # Пример получения данных из payload (поменяйте на реальные поля из уведомлений)
+    # Извлекаем и проверяем подпись
+    payload = json.dumps(data.get('payload'))
+    signature = data.get('signature')
+
+    if not signature or not verify_apple_signature(payload, signature):
+        app.logger.error("Invalid signature from Apple.")
+        return jsonify({'error': 'Invalid signature'}), 400
+
+    # Пример получения данных из payload
     product = data.get('product_id', 'Неизвестный продукт')
     bundle_id = data.get('bundle_id', 'Неизвестный Bundle ID')
     version = data.get('version', 'Неизвестная версия')
@@ -40,8 +76,8 @@ def apple_webhook():
     app.logger.info(f"Sending message to Telegram: {message}")
 
     try:
-        # Отправка сообщения в Telegram
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        # Асинхронная отправка сообщения в Telegram
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         app.logger.info('Message sent to Telegram successfully.')
     except Exception as e:
         app.logger.error(f"Failed to send message to Telegram: {e}")
