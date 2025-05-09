@@ -3,3 +3,6 @@ uvicorn
 requests
 cryptography
 python-dotenv
+Flask
+requests
+python-jose

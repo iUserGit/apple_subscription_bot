@@ -1,50 +1,49 @@
 import json
+import requests
 import base64
 import os
-import requests
+from flask import Flask, request
+from jose import jwk
+from jose.utils import base64url_decode
 
-from fastapi import FastAPI, Request
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.backends import default_backend
+# Получаем переменные окружения
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+APPLE_PUBLIC_KEY_URL_PROD = 'https://appleid.apple.com/auth/keys'
+APPLE_PUBLIC_KEY_URL_SANDBOX = 'https://appleid.apple.com/auth/keys'
 
-app = FastAPI()
-
-# Переменные окружения
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-APPLE_PUBLIC_KEY_URL_PROD = "https://appleid.apple.com/auth/keys"
-APPLE_PUBLIC_KEY_URL_SANDBOX = "https://sandbox.itunes.apple.com/verifyReceipt"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
+app = Flask(__name__)
 
 def get_apple_public_keys(environment):
     url = APPLE_PUBLIC_KEY_URL_SANDBOX if environment == "sandbox" else APPLE_PUBLIC_KEY_URL_PROD
     response = requests.get(url)
     if response.status_code == 200:
-        return response.json().get("keys", [])
+        return response.json().get('keys', [])
     return []
 
-
-def load_public_key(pem_data):
-    return serialization.load_pem_public_key(pem_data.encode(), backend=default_backend())
-
-
-def verify_signature(data, signature, public_key):
+def load_jwk_key(key_data):
     try:
-        signature_bytes = base64.b64decode(signature)
-        data_bytes = json.dumps(data).encode("utf-8")
-        public_key.verify(
-            signature_bytes,
-            data_bytes,
-            padding.PKCS1v15(),
-            hashes.SHA256()
-        )
-        return True
+        return jwk.construct(key_data)
     except Exception as e:
-        print(f"Ошибка при проверке подписи: {e}")
+        print(f"Ошибка при разборе JWK: {e}")
+        return None
+
+def verify_signature(payload: dict, signature: str, key_data: dict) -> bool:
+    key = load_jwk_key(key_data)
+    if not key:
         return False
 
+    try:
+        decoded_signature = base64url_decode(signature.encode())
+        message = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+
+        if key.verify(message, decoded_signature):
+            return True
+    except Exception as e:
+        print(f"Ошибка при проверке подписи: {e}")
+    return False
 
 def extract_purchase_data(notification_data):
     return (
@@ -55,47 +54,45 @@ def extract_purchase_data(notification_data):
         notification_data.get("purchase_date", "Неизвестная дата")
     )
 
-
 def send_telegram_message(message: str):
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message,
+        'parse_mode': 'Markdown'
     }
-    requests.post(TELEGRAM_API_URL, data=payload)
+    response = requests.post(TELEGRAM_API_URL, data=payload)
+    return response.json()
 
+@app.route('/apple-webhook', methods=['POST'])
+def apple_webhook():
+    data = request.json
 
-@app.post("/apple-webhook")
-async def apple_webhook(request: Request):
-    data = await request.json()
+    if 'signed_data' not in data:
+        return json.dumps({"error": "Нет signed_data"}), 400
 
-    if "signed_data" not in data:
-        return {"error": "Нет данных для обработки"}, 400
-
-    signed_data = data["signed_data"]
+    signed_data = data['signed_data']
     environment = data.get("environment", "production")
 
     public_keys = get_apple_public_keys(environment)
     if not public_keys:
-        return {"error": "Не удалось получить публичные ключи Apple"}, 400
+        return json.dumps({"error": "Не удалось получить публичные ключи"}), 400
 
-    try:
-        public_key = load_public_key(public_keys[0]["publicKey"])
-    except Exception as e:
-        return {"error": f"Ошибка загрузки публичного ключа: {str(e)}"}, 400
+    # Берем первый ключ (можно улучшить, проверяя по 'kid' заголовку JWT)
+    if not verify_signature(signed_data['data'], signed_data['signature'], public_keys[0]):
+        return json.dumps({"error": "Подпись не прошла проверку"}), 400
 
-    if not verify_signature(signed_data["data"], signed_data["signature"], public_key):
-        return {"error": "Подпись уведомления невалидна"}, 400
-
-    auto_renew_status, product_id, bundle_id, version, purchase_date = extract_purchase_data(signed_data["data"])
+    auto_renew_status, product_id, bundle_id, version, purchase_date = extract_purchase_data(signed_data['data'])
 
     message = f"""
-📬 Изменён статус автообновления: *{'отключил' if auto_renew_status == 'disabled' else 'включил'}*
-📦 Продукт: `{product_id}`
-📱 Bundle ID: `{bundle_id}`
-📦 Версия приложения: `{version}`
-🕒 Дата покупки: `{purchase_date}`
-"""
-
+> Изменён статус автообновления ({'отключил автообновление' if auto_renew_status == 'disabled' else 'включил автообновление'})
+📦 Продукт: {product_id}
+📱 Bundle ID: {bundle_id}
+📦 Версия приложения: {version}
+🕒 Дата покупки: {purchase_date}
+    """
     send_telegram_message(message)
-    return {"status": "ok"}
+    return "OK", 200
+
+if __name__ == '__main__':
+    port = int(os.getenv("PORT", 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)
