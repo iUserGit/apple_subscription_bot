@@ -6,3 +6,4 @@ python-dotenv
 Flask
 requests
 python-jose
+gunicorn
