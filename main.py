@@ -81,14 +81,14 @@ def apple_webhook():
     try:
         # Получаем данные из запроса
         data = request.json
-        print(f"Получены данные: {data}")  # Добавим логирование
+        print(f"Получены данные: {data}")  # Логируем полученные данные
 
         # Проверяем, что есть данные
-        if 'signed_data' not in data:
-            print("Нет поля 'signed_data' в запросе.")  # Логируем ошибку
+        if 'signedPayload' not in data:
+            print("Нет поля 'signedPayload' в запросе.")  # Логируем ошибку
             return "Нет данных для обработки", 400
 
-        signed_data = data['signed_data']
+        signed_data = data['signedPayload']
         
         # Получаем информацию об окружении (production или sandbox)
         environment = data.get("environment", "production")
