@@ -1,133 +1,125 @@
-import os
 import json
-from fastapi import FastAPI, Request
-import httpx
-from jose import jwt, jwk
-from jose.utils import base64url_decode
-from datetime import datetime, timezone
+import requests
+import base64
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+from flask import Flask, request
+import os
 
-app = FastAPI()
+# Получаем данные из переменных окружения
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+APPLE_PUBLIC_KEY_URL_PROD = 'https://appleid.apple.com/auth/keys'  # для production
+APPLE_PUBLIC_KEY_URL_SANDBOX = 'https://sandbox.itunes.apple.com/verifyReceipt'  # для sandbox
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Устанавливаем URL для отправки сообщения в Telegram
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-notification_map = {
-    "DID_CHANGE_RENEWAL_PREF": "Пользователь изменил подписку",
-    "DID_RENEW": "Подписка успешно продлена",
-    "CANCEL": "Подписка отменена",
-    "INITIAL_BUY": "Первая покупка подписки",
-    "DID_FAIL_TO_RENEW": "Не удалось продлить подписку",
-    "DID_RECOVER": "Подписка восстановлена",
-    "DID_CHANGE_RENEWAL_STATUS": "Изменён статус автообновления",
-    "REFUND": "Произведён возврат",
-}
-
-subtype_map = {
-    "DOWNGRADE": "понизил уровень",
-    "UPGRADE": "повысил уровень",
-    "AUTO_RENEW_ENABLED": "включил автообновление",
-    "AUTO_RENEW_DISABLED": "отключил автообновление",
-    "VOLUNTARY": "отменил вручную",
-}
-
-APPLE_JWKS_URLS = {
-    "Sandbox": "https://api.storekit-sandbox.itunes.apple.com/in-app-purchase/v1/jwsPublicKeys",
-    "Production": "https://api.storekit.itunes.apple.com/in-app-purchase/v1/jwsPublicKeys"
-}
-
-jwks_cache = {}
-
-def format_date(ms_timestamp: str) -> str:
-    try:
-        ts = int(ms_timestamp) / 1000
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-        return dt.strftime("%d %B %Y, %H:%M UTC")
-    except Exception:
-        return "неизвестна"
-
-async def fetch_jwks(environment: str):
-    if environment not in jwks_cache:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(APPLE_JWKS_URLS[environment])
-            resp.raise_for_status()
-            jwks_cache[environment] = resp.json()
-    return jwks_cache[environment]
-
-@app.post("/apple-webhook")
-async def apple_webhook(request: Request):
-    payload = await request.json()
-    print(f"Полученный запрос: {json.dumps(payload, indent=2)}")
-
-    signed_payload = payload.get("signedPayload")
-    if not signed_payload:
-        await send_telegram_message("⚠️ Получен запрос без signedPayload")
-        return {"status": "ignored"}
-
-    try:
-        # Распаковка заголовка, чтобы извлечь 'kid'
-        header_segment = signed_payload.split(".")[0]
-        header_bytes = base64url_decode(header_segment.encode() + b'=' * (-len(header_segment) % 4))
-        header = json.loads(header_bytes)
+# Получаем публичные ключи Apple для проверки подписи
+def get_apple_public_keys(environment):
+    if environment == "sandbox":
+        response = requests.get(APPLE_PUBLIC_KEY_URL_SANDBOX)
+    else:
+        response = requests.get(APPLE_PUBLIC_KEY_URL_PROD)
         
-        # Убедимся, что в заголовке есть поле 'kid'
-        if 'kid' not in header:
-            raise ValueError("В заголовке JWT отсутствует поле 'kid'")
+    if response.status_code == 200:
+        return response.json()['keys']
+    return None
 
-        kid = header["kid"]
+# Функция для загрузки и десериализации публичного ключа
+def load_public_key(pem_data):
+    return serialization.load_pem_public_key(pem_data.encode(), backend=default_backend())
 
-        # Получаем среду (Sandbox или Production) из payload без проверки подписи
-        decoded_claims = jwt.get_unverified_claims(signed_payload)
-        environment = decoded_claims.get("environment", "Production")
-
-        jwks = await fetch_jwks(environment)
-
-        key_data = next((key for key in jwks["keys"] if key["kid"] == kid), None)
-        if not key_data:
-            raise ValueError(f"Ключ с kid={kid} не найден в JWKS")
-
-        public_key = jwk.construct(key_data)
-        message, encoded_sig = signed_payload.rsplit('.', 1)
-        decoded_sig = base64url_decode(encoded_sig.encode())
-
-        if not public_key.verify(message.encode(), decoded_sig):
-            raise ValueError("Подпись JWT недействительна")
-
-        # Теперь можно использовать проверенный payload
-        data = decoded_claims.get("data", {})
-        notification_type = decoded_claims.get("notificationType", "UNKNOWN")
-        subtype = decoded_claims.get("subtype", "NONE")
-
-        product_id = data.get("productId", "N/A")
-        bundle_id = data.get("bundleId", "N/A")
-        bundle_version = data.get("bundleVersion", "N/A")
-        purchase_date_raw = data.get("purchaseDate", None)
-        purchase_date = format_date(purchase_date_raw) if purchase_date_raw else "не указана"
-
-        readable_type = notification_map.get(notification_type, notification_type)
-        readable_subtype = subtype_map.get(subtype, subtype)
-
-        message = (
-            f"📬 {readable_type}"
-            + (f" ({readable_subtype})" if readable_subtype else "") + "\n\n"
-            f"📦 Продукт: {product_id}\n"
-            f"📱 Bundle ID: {bundle_id}\n"
-            f"📦 Версия приложения: {bundle_version}\n"
-            f"🕒 Дата покупки: {purchase_date}"
+# Функция для проверки подписи
+def verify_signature(data, signature, public_key):
+    try:
+        # Распаковываем base64-закодированные данные
+        signature = base64.b64decode(signature)
+        data = json.dumps(data).encode('utf-8')
+        
+        # Проверка подписи с помощью публичного ключа
+        public_key.verify(
+            signature,
+            data,
+            padding.PKCS1v15(),
+            hashes.SHA256()
         )
-
-        await send_telegram_message(message)
-
+        return True
     except Exception as e:
-        await send_telegram_message(f"❌ Ошибка при обработке payload: {str(e)}")
+        print(f"Ошибка при проверке подписи: {e}")
+        return False
 
-    return {"status": "processed"}
+# Функция для извлечения данных из уведомления
+def extract_purchase_data(notification_data):
+    # Извлекаем необходимые поля
+    auto_renew_status = notification_data.get("auto_renew_status", "Неизвестный статус")
+    product_id = notification_data.get("product_id", "Неизвестный продукт")
+    bundle_id = notification_data.get("bundle_id", "Неизвестный Bundle ID")
+    version = notification_data.get("version", "Неизвестная версия")
+    purchase_date = notification_data.get("purchase_date", "Неизвестная дата")
+    
+    return auto_renew_status, product_id, bundle_id, version, purchase_date
 
-async def send_telegram_message(text: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
+# Функция для отправки сообщения в Telegram
+def send_telegram_message(message: str):
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message,
+        'parse_mode': 'Markdown'  # чтобы использовать форматирование Markdown
+    }
+    response = requests.post(TELEGRAM_API_URL, data=payload)
+    return response.json()
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
+# Создаем Flask приложение
+app = Flask(__name__)
 
-    async with httpx.AsyncClient() as client:
-        await client.post(url, json=payload)
+# Обработчик POST запроса с данными
+@app.route('/apple-webhook', methods=['POST'])
+def apple_webhook():
+    # Получаем данные из запроса
+    data = request.json
+
+    # Проверяем, что есть данные
+    if 'signed_data' not in data:
+        return "Нет данных для обработки", 400
+
+    signed_data = data['signed_data']
+    
+    # Получаем информацию об окружении (production или sandbox)
+    environment = data.get("environment", "production")
+
+    # Получаем публичные ключи Apple
+    public_keys = get_apple_public_keys(environment)
+    if not public_keys:
+        return "Не удалось получить публичные ключи Apple", 400
+
+    # Для простоты возьмем первый ключ (можно улучшить обработку нескольких ключей)
+    public_key = load_public_key(public_keys[0]['publicKey'])
+
+    # Проверяем подпись уведомления
+    if not verify_signature(signed_data['data'], signed_data['signature'], public_key):
+        return "Подпись уведомления невалидна", 400
+
+    # Извлекаем данные уведомления
+    auto_renew_status, product_id, bundle_id, version, purchase_date = extract_purchase_data(signed_data['data'])
+
+    # Формируем сообщение для отправки в Telegram
+    message = f"""
+> Изменён статус автообновления ({'отключил автообновление' if auto_renew_status == 'disabled' else 'включил автообновление'})
+📦 Продукт: {product_id}
+📱 Bundle ID: {bundle_id}
+📦 Версия приложения: {version}
+🕒 Дата покупки: {purchase_date}
+    """
+    
+    # Отправляем сообщение в Telegram
+    send_telegram_message(message)
+    
+    return "OK", 200
+
+if __name__ == '__main__':
+    # Используем динамический порт из переменной окружения
+    port = int(os.getenv("PORT", 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)
