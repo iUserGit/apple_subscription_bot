@@ -1,6 +1,5 @@
-Flask
-Werkzeug
+fastapi
+uvicorn
 requests
 cryptography
-uvicorn
 python-dotenv
