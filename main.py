@@ -1,13 +1,10 @@
 import os
 import json
-import base64
-import hashlib
-import hmac
 import telegram
 import asyncio
 from quart import Quart, request, jsonify
 import jwt
-from jwt.exceptions import InvalidTokenError
+from jwt.exceptions import InvalidSignatureError
 
 app = Quart(__name__)
 
@@ -19,77 +16,61 @@ APPLE_SHARED_SECRET = os.getenv('APPLE_SHARED_SECRET')
 # Создаем экземпляр бота Telegram
 bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
-def verify_apple_signature(payload, signature):
-    """
-    Функция для верификации подписи данных, полученных от Apple.
-    """
-    try:
-        # Расшифровка подписи с использованием APPLE_SHARED_SECRET
-        decoded_signature = base64.b64decode(signature)
-        
-        # Хешируем полученные данные с использованием APPLE_SHARED_SECRET
-        expected_signature = hmac.new(APPLE_SHARED_SECRET.encode(), payload.encode(), hashlib.sha256).digest()
-        
-        # Сравниваем вычисленную подпись с полученной
-        if decoded_signature == expected_signature:
-            return True
-        else:
-            app.logger.error("Calculated signature does not match received signature")
-            return False
-    except Exception as e:
-        app.logger.error(f"Ошибка при верификации подписи: {e}")
-        return False
-
 @app.route('/apple_webhook', methods=['POST'])
 async def apple_webhook():
-    data = await request.get_json()  # Получаем данные из POST-запроса асинхронно
+    data = await request.get_json()
 
-    # Логируем полученные данные
-    app.logger.info(f"Received data: {data}")
+    if not data or 'signedPayload' not in data:
+        app.logger.error("No signedPayload provided.")
+        return jsonify({'error': 'No signedPayload'}), 400
 
-    if not data:
-        app.logger.error('No data received!')
-        return jsonify({'error': 'No data received'}), 400
+    signed_payload = data['signedPayload']
 
-    # Извлекаем и проверяем подпись
-    payload = json.dumps(data.get('payload'))
-    signature = data.get('signature')
-
-    # Логирование полученной подписи и данных для отладки
-    app.logger.info(f"Received signature: {signature}")
-    app.logger.info(f"Payload for signature verification: {payload}")
-
-    if not signature or not verify_apple_signature(payload, signature):
+    try:
+        # Расшифровка JWT-подписи от Apple
+        decoded = jwt.decode(
+            signed_payload,
+            APPLE_SHARED_SECRET,
+            algorithms=['HS256'],
+            options={"verify_exp": False}  # Отключаем проверку срока действия
+        )
+        app.logger.info(f"Decoded payload: {json.dumps(decoded, indent=2)}")
+    except InvalidSignatureError:
         app.logger.error("Invalid signature from Apple.")
         return jsonify({'error': 'Invalid signature'}), 400
+    except Exception as e:
+        app.logger.error(f"JWT decode error: {e}")
+        return jsonify({'error': 'JWT decode error'}), 400
 
-    # Пример получения данных из payload
-    product = data.get('product_id', 'Неизвестный продукт')
-    bundle_id = data.get('bundle_id', 'Неизвестный Bundle ID')
-    version = data.get('version', 'Неизвестная версия')
-    purchase_date = data.get('purchase_date', 'Неизвестная дата покупки')
+    # Извлечение полезных данных из расшифрованного payload
+    notification_type = decoded.get("notificationType", "Неизвестный тип")
+    subtype = decoded.get("subtype", "")
+    data_object = decoded.get("data", {})
+    product_id = data_object.get("productId", "Неизвестный продукт")
+    bundle_id = data_object.get("bundleId", "Неизвестный Bundle ID")
+    purchase_date = data_object.get("purchaseDate", "Неизвестная дата")
 
     message = (
-        f"> Изменён статус автообновления\n"
-        f"📦 Продукт: {product}\n"
+        f"📩 Уведомление от Apple: {notification_type} {f'({subtype})' if subtype else ''}\n"
+        f"📦 Продукт: {product_id}\n"
         f"📱 Bundle ID: {bundle_id}\n"
-        f"📦 Версия приложения: {version}\n"
         f"🕒 Дата покупки: {purchase_date}"
     )
 
-    # Логируем сообщение, которое отправляем в Telegram
     app.logger.info(f"Sending message to Telegram: {message}")
 
     try:
-        # Асинхронная отправка сообщения в Telegram
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-        app.logger.info('Message sent to Telegram successfully.')
+        app.logger.info("Message sent to Telegram successfully.")
     except Exception as e:
         app.logger.error(f"Failed to send message to Telegram: {e}")
 
     return jsonify({'status': 'success'}), 200
 
+@app.route('/', methods=['GET'])
+async def root():
+    return jsonify({"status": "running"}), 200
+
 if __name__ == '__main__':
-    # Получаем порт из переменной окружения или по умолчанию 5000
-    port = int(os.getenv('PORT', 5000))
+    port = int(os.getenv("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)

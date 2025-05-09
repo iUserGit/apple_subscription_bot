@@ -1,6 +1,6 @@
 Flask
 requests
 python-telegram-bot
-pyjwt
 uvicorn
 quart
+PyJWT
