@@ -42,7 +42,7 @@ def verify_apple_signature(payload, signature):
 
 @app.route('/apple_webhook', methods=['POST'])
 async def apple_webhook():
-   data = await request.get_json()  # Получаем данные из POST-запроса асинхронно
+    data = await request.get_json()  # Получаем данные из POST-запроса асинхронно
 
     # Логируем полученные данные
     app.logger.info(f"Received data: {data}")
