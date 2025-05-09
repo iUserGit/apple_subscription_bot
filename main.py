@@ -34,6 +34,7 @@ def verify_apple_signature(payload, signature):
         if decoded_signature == expected_signature:
             return True
         else:
+            app.logger.error("Calculated signature does not match received signature")
             return False
     except Exception as e:
         app.logger.error(f"Ошибка при верификации подписи: {e}")
@@ -41,7 +42,7 @@ def verify_apple_signature(payload, signature):
 
 @app.route('/apple_webhook', methods=['POST'])
 async def apple_webhook():
-    data = await request.get_json()  # Получаем данные из POST-запроса асинхронно
+   data = await request.get_json()  # Получаем данные из POST-запроса асинхронно
 
     # Логируем полученные данные
     app.logger.info(f"Received data: {data}")
@@ -53,6 +54,10 @@ async def apple_webhook():
     # Извлекаем и проверяем подпись
     payload = json.dumps(data.get('payload'))
     signature = data.get('signature')
+
+    # Логирование полученной подписи и данных для отладки
+    app.logger.info(f"Received signature: {signature}")
+    app.logger.info(f"Payload for signature verification: {payload}")
 
     if not signature or not verify_apple_signature(payload, signature):
         app.logger.error("Invalid signature from Apple.")
