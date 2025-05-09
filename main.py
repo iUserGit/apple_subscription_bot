@@ -1,47 +1,40 @@
 import os
 import json
-from fastapi import FastAPI, Request
 import httpx
+from fastapi import FastAPI, Request
 from jose import jwt
+from jose.exceptions import JWTError
 from datetime import datetime, timezone
 
 app = FastAPI()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+APPLE_JWKS_URL = os.getenv("APPLE_JWKS_URL", "https://api.storekit.itunes.apple.com/in-app/v1/jwsPublicKeys")
 
-notification_map = {
-    "DID_CHANGE_RENEWAL_PREF": "Пользователь изменил подписку",
-    "DID_RENEW": "Подписка успешно продлена",
-    "CANCEL": "Подписка отменена",
-    "INITIAL_BUY": "Первая покупка подписки",
-    "DID_FAIL_TO_RENEW": "Не удалось продлить подписку",
-    "DID_RECOVER": "Подписка восстановлена",
-    "DID_CHANGE_RENEWAL_STATUS": "Изменён статус автообновления",
-    "REFUND": "Произведён возврат",
-}
-
-subtype_map = {
-    "DOWNGRADE": "понизил уровень",
-    "UPGRADE": "повысил уровень",
-    "AUTO_RENEW_ENABLED": "включил автообновление",
-    "AUTO_RENEW_DISABLED": "отключил автообновление",
-    "VOLUNTARY": "отменил вручную",
-}
+# === MAPS OMITTED HERE for brevity ===
+# notification_map and subtype_map оставим как у тебя
 
 def format_date(ms_timestamp: str) -> str:
     try:
-        ts = int(ms_timestamp) / 1000  # из миллисекунд в секунды
+        ts = int(ms_timestamp) / 1000
         dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         return dt.strftime("%d %B %Y, %H:%M UTC")
     except Exception:
         return "неизвестна"
 
+async def fetch_apple_public_key(kid: str, alg: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(APPLE_JWKS_URL)
+        keys = response.json().get("keys", [])
+        for key in keys:
+            if key["kid"] == kid and key["alg"] == alg:
+                return key
+    raise ValueError("Публичный ключ не найден для kid=" + kid)
+
 @app.post("/apple-webhook")
 async def apple_webhook(request: Request):
     payload = await request.json()
-
-    # Логирование всего тела запроса
     print(f"Полученный запрос: {json.dumps(payload, indent=2)}")
 
     signed_payload = payload.get("signedPayload")
@@ -50,10 +43,23 @@ async def apple_webhook(request: Request):
         return {"status": "ignored"}
 
     try:
-        decoded_payload = jwt.get_unverified_claims(signed_payload)
+        # Получаем заголовки JWT
+        headers = jwt.get_unverified_header(signed_payload)
+        kid = headers["kid"]
+        alg = headers["alg"]
 
-        # Логирование декодированного payload
-        print(f"Decoded Payload: {json.dumps(decoded_payload, indent=2)}")
+        # Получаем публичный ключ Apple по kid
+        public_key_jwk = await fetch_apple_public_key(kid, alg)
+
+        # Декодируем JWT с проверкой подписи
+        decoded_payload = jwt.decode(
+            signed_payload,
+            key=public_key_jwk,
+            algorithms=[alg],
+            options={"verify_aud": False}  # Обычно аудитория не используется
+        )
+
+        print(f"✅ Подпись подтверждена. Payload: {json.dumps(decoded_payload, indent=2)}")
 
         notification_type = decoded_payload.get("notificationType", "UNKNOWN")
         subtype = decoded_payload.get("subtype", "NONE")
@@ -64,9 +70,6 @@ async def apple_webhook(request: Request):
         bundle_version = data.get("bundleVersion", "N/A")
         purchase_date_raw = data.get("purchaseDate", None)
         purchase_date = format_date(purchase_date_raw) if purchase_date_raw else "не указана"
-
-        # Логирование извлеченных данных
-        print(f"Extracted data: productId={product_id}, bundleId={bundle_id}, bundleVersion={bundle_version}, purchaseDate={purchase_date}")
 
         readable_type = notification_map.get(notification_type, notification_type)
         readable_subtype = subtype_map.get(subtype, subtype)
@@ -81,8 +84,11 @@ async def apple_webhook(request: Request):
         )
 
         await send_telegram_message(message)
+
+    except JWTError as e:
+        await send_telegram_message(f"❌ Ошибка валидации JWT: {str(e)}")
     except Exception as e:
-        await send_telegram_message(f"❌ Ошибка при декодировании payload: {str(e)}")
+        await send_telegram_message(f"❌ Ошибка при обработке payload: {str(e)}")
 
     return {"status": "processed"}
 
@@ -91,15 +97,7 @@ async def send_telegram_message(text: str):
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
 
     async with httpx.AsyncClient() as client:
         await client.post(url, json=payload)
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
