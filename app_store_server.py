@@ -248,7 +248,10 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
     if app_account_token:
         lines.append(f"*{escape_markdown('Токен пользователя')}:* `{escape_markdown(app_account_token)}`")
     
-    return "\n\n".join(lines)
+    separator = escape_markdown("<-------------->")
+    message_body = "\n\n".join(lines)
+    
+    return f"{separator}\n\n{message_body}\n\n{separator}"
 
 
 @app.route('/apple_webhook', methods=['POST'])
