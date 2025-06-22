@@ -285,10 +285,15 @@ def handle_app_store_notification():
         return jsonify({'status': 'error', 'message': f'An unexpected error occurred: {e}'}), 500
 
 
+# Вызываем функцию загрузки здесь, на уровне модуля.
+# Этот код выполнится один раз, когда Gunicorn импортирует файл.
+download_apple_root_ca_cert()
+
+
 if __name__ == '__main__':
-    download_apple_root_ca_cert()
+    # Для локального запуска добавим проверку, загрузился ли сертификат.
     if apple_root_ca_g3_cert is None:
-        print("Could not start server due to missing Apple Root CA certificate.")
+        print("Could not start server due to missing Apple Root CA certificate. Exiting.")
     else:
         # Для production используйте Gunicorn или другой WSGI сервер.
         # Пример: gunicorn --bind 0.0.0.0:8000 app_store_server:app
