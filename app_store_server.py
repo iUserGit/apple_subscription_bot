@@ -3,7 +3,7 @@ import json
 import os
 
 import requests
-from authlib.jose import jws
+from authlib.jws import verify
 from authlib.jose.errors import JoseError
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -238,7 +238,7 @@ def handle_app_store_notification():
 
         # 3. Проверяем подпись JWS
         # Apple использует алгоритм ES256
-        payload_bytes = jws.verify(signed_payload.encode('utf-8'), public_key, header)
+        payload_bytes = verify(signed_payload.encode('utf-8'), public_key, header)
         decoded_payload = json.loads(payload_bytes)
 
         # На этом этапе уведомление считается проверенным.
@@ -249,7 +249,7 @@ def handle_app_store_notification():
             try:
                 signed_transaction_info = notification_data['signedTransactionInfo']
                 # Для проверки вложенного JWS нужно передать алгоритм, т.к. в его заголовке он отсутствует
-                transaction_payload_bytes = jws.verify(signed_transaction_info.encode('utf-8'), public_key, {'alg': 'ES256'})
+                transaction_payload_bytes = verify(signed_transaction_info.encode('utf-8'), public_key, {'alg': 'ES256'})
                 transaction_info = json.loads(transaction_payload_bytes)
             except JoseError as e:
                 print(f"Failed to decode signedTransactionInfo: {e}")
