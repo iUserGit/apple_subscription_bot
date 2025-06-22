@@ -7,7 +7,9 @@ from authlib.jose import JsonWebSignature
 from authlib.jose.errors import JoseError
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.ec import ECPublicKey, ECDSA
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from flask import Flask, jsonify, request
 
 # Загрузка переменных окружения для production-среды
@@ -126,36 +128,36 @@ def verify_certificate_chain(cert_chain_base64, root_ca_cert):
 
         # 1. Проверяем подпись промежуточного сертификата корневым
         issuer_key_1 = root_ca_cert.public_key()
-        if isinstance(issuer_key_1, rsa.RSAPublicKey):
+        if isinstance(issuer_key_1, RSAPublicKey):
             issuer_key_1.verify(
                 intermediate_cert.signature,
                 intermediate_cert.tbs_certificate_bytes,
                 padding.PKCS1v15(),
                 intermediate_cert.signature_hash_algorithm,
             )
-        elif isinstance(issuer_key_1, ec.ECPublicKey):
+        elif isinstance(issuer_key_1, ECPublicKey):
             issuer_key_1.verify(
                 intermediate_cert.signature,
                 intermediate_cert.tbs_certificate_bytes,
-                ec.ECDSA(intermediate_cert.signature_hash_algorithm),
+                ECDSA(intermediate_cert.signature_hash_algorithm),
             )
         else:
             return False, f"Unsupported issuer key type: {type(issuer_key_1)}"
 
         # 2. Проверяем подпись конечного сертификата промежуточным
         issuer_key_2 = intermediate_cert.public_key()
-        if isinstance(issuer_key_2, rsa.RSAPublicKey):
+        if isinstance(issuer_key_2, RSAPublicKey):
             issuer_key_2.verify(
                 leaf_cert.signature,
                 leaf_cert.tbs_certificate_bytes,
                 padding.PKCS1v15(),
                 leaf_cert.signature_hash_algorithm,
             )
-        elif isinstance(issuer_key_2, ec.ECPublicKey):
+        elif isinstance(issuer_key_2, ECPublicKey):
             issuer_key_2.verify(
                 leaf_cert.signature,
                 leaf_cert.tbs_certificate_bytes,
-                ec.ECDSA(leaf_cert.signature_hash_algorithm),
+                ECDSA(leaf_cert.signature_hash_algorithm),
             )
         else:
             return False, f"Unsupported issuer key type: {type(issuer_key_2)}"
