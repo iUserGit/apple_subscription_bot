@@ -8,7 +8,7 @@ from authlib.jose.errors import JoseError
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives.asymmetric.ec import ECPublicKey, ECDSA
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey, ECDSA
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from flask import Flask, jsonify, request
 
@@ -135,7 +135,7 @@ def verify_certificate_chain(cert_chain_base64, root_ca_cert):
                 padding.PKCS1v15(),
                 intermediate_cert.signature_hash_algorithm,
             )
-        elif isinstance(issuer_key_1, ECPublicKey):
+        elif isinstance(issuer_key_1, EllipticCurvePublicKey):
             issuer_key_1.verify(
                 intermediate_cert.signature,
                 intermediate_cert.tbs_certificate_bytes,
@@ -153,7 +153,7 @@ def verify_certificate_chain(cert_chain_base64, root_ca_cert):
                 padding.PKCS1v15(),
                 leaf_cert.signature_hash_algorithm,
             )
-        elif isinstance(issuer_key_2, ECPublicKey):
+        elif isinstance(issuer_key_2, EllipticCurvePublicKey):
             issuer_key_2.verify(
                 leaf_cert.signature,
                 leaf_cert.tbs_certificate_bytes,
