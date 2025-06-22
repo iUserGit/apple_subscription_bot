@@ -1,4 +1,5 @@
 Flask
 authlib
 cryptography
-requests 
+requests
+gunicorn 
