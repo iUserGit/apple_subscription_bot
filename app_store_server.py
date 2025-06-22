@@ -178,7 +178,7 @@ def verify_certificate_chain(cert_chain_base64, root_ca_cert):
         return False, f"Certificate chain validation failed: {e}"
 
 
-def format_notification_for_telegram(decoded_payload, transaction_info):
+def format_notification_for_telegram(decoded_payload, transaction_info, renewal_info):
     """Форматирует полезную нагрузку уведомления в читаемое сообщение для Telegram."""
     notification_type = decoded_payload.get('notificationType')
     subtype = decoded_payload.get('subtype')
@@ -187,23 +187,39 @@ def format_notification_for_telegram(decoded_payload, transaction_info):
     readable_type = NOTIFICATION_TYPE_MAP.get(notification_type, notification_type)
     readable_subtype = SUBTYPE_MAP.get(subtype, subtype) if subtype else None
 
-    # Извлекаем данные из расшифрованной транзакции
+    # --- Извлекаем данные из расшифрованных транзакций и статусов ---
+    
+    # Из транзакции
     transaction_id = transaction_info.get('transactionId')
+    original_transaction_id = transaction_info.get('originalTransactionId')
     product_id = transaction_info.get('productId')
+    expires_date_ms = transaction_info.get('expiresDate')
     purchase_date_ms = transaction_info.get('purchaseDate')
+    price = transaction_info.get('price')
+    currency = transaction_info.get('currency')
 
-    # Извлекаем данные из основной полезной нагрузки
+    # Из информации о продлении
+    auto_renew_status = renewal_info.get('autoRenewStatus')
+
+    # Из основной полезной нагрузки
     app_account_token = data.get('appAccountToken') # UUID пользователя, если вы его устанавливаете
     environment = data.get('environment', 'N/A').capitalize()
 
-    # Конвертируем дату
-    purchase_date_str = None
-    if purchase_date_ms:
+    # --- Форматируем данные для вывода ---
+    
+    def format_date(ms):
+        if not ms: return None
         from datetime import datetime
-        dt_object = datetime.fromtimestamp(purchase_date_ms / 1000)
-        purchase_date_str = dt_object.strftime('%d.%m.%Y %H:%M:%S UTC')
+        return datetime.fromtimestamp(ms / 1000).strftime('%d.%m.%Y %H:%M:%S UTC')
 
-    # Собираем сообщение
+    purchase_date_str = format_date(purchase_date_ms)
+    expires_date_str = format_date(expires_date_ms)
+    
+    auto_renew_str = None
+    if auto_renew_status is not None:
+        auto_renew_str = "Включено ✅" if auto_renew_status == 1 else "Выключено ❌"
+
+    # --- Собираем сообщение ---
     title = f"🔔 *{escape_markdown(readable_type)}*"
     lines = [title]
 
@@ -214,10 +230,21 @@ def format_notification_for_telegram(decoded_payload, transaction_info):
 
     if product_id:
         lines.append(f"*{escape_markdown('ID продукта')}:* `{escape_markdown(product_id)}`")
-    if transaction_id:
-        lines.append(f"*{escape_markdown('ID транзакции')}:* `{escape_markdown(transaction_id)}`")
+    if price is not None and currency:
+        lines.append(f"*{escape_markdown('Цена')}:* `{escape_markdown(price)} {escape_markdown(currency)}`")
+    if auto_renew_str:
+        lines.append(f"*{escape_markdown('Автопродление')}:* `{escape_markdown(auto_renew_str)}`")
+
     if purchase_date_str:
         lines.append(f"*{escape_markdown('Дата покупки')}:* `{escape_markdown(purchase_date_str)}`")
+    if expires_date_str:
+        lines.append(f"*{escape_markdown('Истекает')}:* `{escape_markdown(expires_date_str)}`")
+    
+    if transaction_id:
+        lines.append(f"*{escape_markdown('ID транзакции')}:* `{escape_markdown(transaction_id)}`")
+    if original_transaction_id:
+        lines.append(f"*{escape_markdown('Исходный ID транз.')}:* `{escape_markdown(original_transaction_id)}`")
+
     if app_account_token:
         lines.append(f"*{escape_markdown('Токен пользователя')}:* `{escape_markdown(app_account_token)}`")
     
@@ -265,9 +292,11 @@ def handle_app_store_notification():
         decoded_payload = json.loads(payload_bytes)
 
         # На этом этапе уведомление считается проверенным.
-        # Теперь расшифруем вложенную информацию о транзакции.
+        # Теперь расшифруем вложенную информацию.
         transaction_info = {}
+        renewal_info = {}
         notification_data = decoded_payload.get('data', {})
+
         if notification_data and notification_data.get('signedTransactionInfo'):
             try:
                 signed_transaction_info = notification_data['signedTransactionInfo']
@@ -279,6 +308,17 @@ def handle_app_store_notification():
                 print(f"Failed to decode signedTransactionInfo: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred while decoding transaction info: {e}")
+        
+        if notification_data and notification_data.get('signedRenewalInfo'):
+            try:
+                signed_renewal_info = notification_data['signedRenewalInfo']
+                decoded_renewal_data = jws.deserialize_compact(signed_renewal_info.encode('utf-8'), public_key)
+                renewal_payload_bytes = decoded_renewal_data['payload']
+                renewal_info = json.loads(renewal_payload_bytes)
+            except JoseError as e:
+                print(f"Failed to decode signedRenewalInfo: {e}")
+            except Exception as e:
+                print(f"An unexpected error occurred while decoding renewal info: {e}")
 
         # Обрабатываем полезную нагрузку
         notification_type = decoded_payload.get('notificationType')
@@ -292,7 +332,7 @@ def handle_app_store_notification():
         
         # Форматируем и отправляем сообщение в Telegram
         try:
-            message_to_telegram = format_notification_for_telegram(decoded_payload, transaction_info)
+            message_to_telegram = format_notification_for_telegram(decoded_payload, transaction_info, renewal_info)
             send_telegram_message(message_to_telegram)
         except Exception as e:
             print(f"Error formatting message for Telegram: {e}")
