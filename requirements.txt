@@ -1,4 +1,4 @@
-fastapi
-uvicorn
-httpx
-python-jose
+Flask
+authlib
+cryptography
+requests 
