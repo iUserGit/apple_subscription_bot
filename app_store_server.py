@@ -219,6 +219,13 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
     if auto_renew_status is not None:
         auto_renew_str = "Включено ✅" if auto_renew_status == 1 else "Выключено ❌"
 
+    formatted_price_str = None
+    if price is not None and currency:
+        # Цена от Apple приходит в "милли-юнитах" (умноженная на 1000).
+        # Делим, чтобы получить реальное значение, и форматируем.
+        formatted_price = price / 1000.0
+        formatted_price_str = f"{formatted_price:.2f} {escape_markdown(currency)}"
+
     # --- Собираем сообщение ---
     title = f"🔔 *{escape_markdown(readable_type)}*"
     lines = [title]
@@ -230,8 +237,8 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
 
     if product_id:
         lines.append(f"*{escape_markdown('ID продукта')}:* `{escape_markdown(product_id)}`")
-    if price is not None and currency:
-        lines.append(f"*{escape_markdown('Цена')}:* `{escape_markdown(price)} {escape_markdown(currency)}`")
+    if formatted_price_str:
+        lines.append(f"*{escape_markdown('Цена')}:* `{formatted_price_str}`")
     if auto_renew_str:
         lines.append(f"*{escape_markdown('Автопродление')}:* `{escape_markdown(auto_renew_str)}`")
 
