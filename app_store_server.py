@@ -205,6 +205,11 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
     app_account_token = data.get('appAccountToken') # UUID пользователя, если вы его устанавливаете
     environment = data.get('environment', 'N/A').capitalize()
 
+    # --- Новые поля ---
+    bundle_id = data.get('bundleId') or transaction_info.get('bundleId')
+    app_version = transaction_info.get('appVersion') or transaction_info.get('versionExternalIdentifier')
+    country = transaction_info.get('countryCode') or transaction_info.get('storefront') or transaction_info.get('storefrontId')
+
     # --- Форматируем данные для вывода ---
     
     def format_date(ms):
@@ -235,6 +240,14 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
     
     lines.append(f"*{escape_markdown('Окружение')}:* `{escape_markdown(environment)}`")
 
+    # Новые поля
+    if bundle_id:
+        lines.append(f"*{escape_markdown('Bundle ID')}:* `{escape_markdown(bundle_id)}`")
+    if app_version:
+        lines.append(f"*{escape_markdown('Версия приложения')}:* `{escape_markdown(app_version)}`")
+    if country:
+        lines.append(f"*{escape_markdown('Страна')}:* `{escape_markdown(country)}`")
+
     if product_id:
         lines.append(f"*{escape_markdown('ID продукта')}:* `{escape_markdown(product_id)}`")
     if formatted_price_str:
@@ -256,7 +269,7 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
         lines.append(f"*{escape_markdown('Токен пользователя')}:* `{escape_markdown(app_account_token)}`")
     
     separator = escape_markdown("<-------------->")
-    message_body = "\n\n".join(lines)
+    message_body = "\n".join(lines)
     
     return f"{separator}\n\n{message_body}\n\n{separator}"
 
