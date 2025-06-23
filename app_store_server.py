@@ -248,6 +248,29 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
     if country:
         lines.append(f"*{escape_markdown('Страна')}:* `{escape_markdown(country)}`")
 
+    # Тип устройства
+    device_type = transaction_info.get('deviceType') or transaction_info.get('deviceTypeCode')
+    device_type_map = {
+        1: 'iPhone',
+        2: 'iPad',
+        3: 'Apple TV',
+        4: 'Apple Watch',
+        5: 'Mac',
+        '1': 'iPhone',
+        '2': 'iPad',
+        '3': 'Apple TV',
+        '4': 'Apple Watch',
+        '5': 'Mac',
+        'iPhone': 'iPhone',
+        'iPad': 'iPad',
+        'Apple TV': 'Apple TV',
+        'Apple Watch': 'Apple Watch',
+        'Mac': 'Mac',
+    }
+    if device_type:
+        readable_device = device_type_map.get(device_type, str(device_type))
+        lines.append(f"*{escape_markdown('Устройство')}:* `{escape_markdown(readable_device)}`")
+
     if product_id:
         lines.append(f"*{escape_markdown('ID продукта')}:* `{escape_markdown(product_id)}`")
     if formatted_price_str:
