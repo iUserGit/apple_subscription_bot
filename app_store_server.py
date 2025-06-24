@@ -207,7 +207,7 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
 
     # --- Новые поля ---
     bundle_id = data.get('bundleId') or transaction_info.get('bundleId')
-    app_version = transaction_info.get('appVersion') or transaction_info.get('versionExternalIdentifier')
+    app_version = data.get('bundleVersion') or transaction_info.get('appVersion') or transaction_info.get('versionExternalIdentifier')
     country = transaction_info.get('countryCode') or transaction_info.get('storefront') or transaction_info.get('storefrontId')
 
     # --- Форматируем данные для вывода ---
@@ -239,6 +239,32 @@ def format_notification_for_telegram(decoded_payload, transaction_info, renewal_
         lines.append(f"*{escape_markdown('Детали')}:* `{escape_markdown(readable_subtype)}`")
     
     lines.append(f"*{escape_markdown('Окружение')}:* `{escape_markdown(environment)}`")
+
+    # Новые поля из логов
+    ownership_type = transaction_info.get('inAppOwnershipType')
+    if ownership_type:
+        readable_ownership = "Семейный доступ" if ownership_type == "FAMILY_SHARED" else "Прямая покупка"
+        lines.append(f"*{escape_markdown('Тип владения')}:* `{escape_markdown(readable_ownership)}`")
+
+    transaction_reason = transaction_info.get('transactionReason')
+    if transaction_reason:
+        lines.append(f"*{escape_markdown('Причина транзакции')}:* `{escape_markdown(transaction_reason)}`")
+
+    offer_discount_type = transaction_info.get('offerDiscountType')
+    if offer_discount_type:
+        lines.append(f"*{escape_markdown('Тип скидки')}:* `{escape_markdown(offer_discount_type)}`")
+
+    expiration_intent = renewal_info.get('expirationIntent')
+    if expiration_intent:
+        expiration_reason_map = {
+            1: "Отменено пользователем",
+            2: "Проблема с оплатой",
+            3: "Не согласился с повышением цены",
+            4: "Продукт недоступен",
+            5: "Неизвестная причина"
+        }
+        readable_expiration_reason = expiration_reason_map.get(expiration_intent, f"Код {expiration_intent}")
+        lines.append(f"*{escape_markdown('Причина истечения')}:* `{escape_markdown(readable_expiration_reason)}`")
 
     # Новые поля
     if bundle_id:
@@ -373,15 +399,6 @@ def handle_app_store_notification():
         print(f"✅ Received and verified notification:")
         print(f"  Type: {notification_type}")
         print(f"  Subtype: {subtype}")
-
-        # --- Полные данные для отладки ---
-        print("\n--- Decoded Payload ---")
-        print(json.dumps(decoded_payload, indent=2, ensure_ascii=False))
-        print("\n--- Transaction Info ---")
-        print(json.dumps(transaction_info, indent=2, ensure_ascii=False))
-        print("\n--- Renewal Info ---")
-        print(json.dumps(renewal_info, indent=2, ensure_ascii=False))
-        
         print("---")
         
         # Форматируем и отправляем сообщение в Telegram
