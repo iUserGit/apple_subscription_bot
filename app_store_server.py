@@ -370,10 +370,18 @@ def handle_app_store_notification():
         notification_type = decoded_payload.get('notificationType')
         subtype = decoded_payload.get('subtype')
         
-        print("---")
         print(f"✅ Received and verified notification:")
         print(f"  Type: {notification_type}")
         print(f"  Subtype: {subtype}")
+
+        # --- Полные данные для отладки ---
+        print("\n--- Decoded Payload ---")
+        print(json.dumps(decoded_payload, indent=2, ensure_ascii=False))
+        print("\n--- Transaction Info ---")
+        print(json.dumps(transaction_info, indent=2, ensure_ascii=False))
+        print("\n--- Renewal Info ---")
+        print(json.dumps(renewal_info, indent=2, ensure_ascii=False))
+        
         print("---")
         
         # Форматируем и отправляем сообщение в Telegram
